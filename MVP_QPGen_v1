@@ -1,0 +1,74 @@
+import os
+from dotenv import load_dotenv
+from langchain_classic.chains.combine_documents import create_stuff_documents_chain
+from langchain_classic.chains.retrieval import create_retrieval_chain
+from langchain_core.prompts import ChatPromptTemplate
+
+load_dotenv()
+import LearningUtils
+
+LLM7_TOKEN = os.getenv("LLM7_TOKEN")
+
+PDFname = input("Enter the PDF name(with .pdf extension): ")
+targetPDFpath = os.path.join(".","samplePDFs",PDFname)
+print(f"Loading {targetPDFpath}...")
+pdfVectorDB_path = os.path.join(".","vectorDBs",f"{PDFname.split('.')[0]}_vecDB")
+
+pdfVectorDB = LearningUtils.getVectorStoreOf(textPath = targetPDFpath, DBpath = pdfVectorDB_path)
+pdfRetriever = pdfVectorDB.as_retriever(
+    search_type = "similarity",
+    search_kwargs = {
+        "k": 10
+    }
+)
+
+qpGenLLM = LearningUtils.openAI_LLM7(LLM7_TOKEN, 0.1)
+qpGenPrompt = ChatPromptTemplate.from_messages([
+    ("system",
+""" CRITICAL INSTRUCTIONS:
+    - You are an expert educational content creator specializing in Bloom's Taxonomy. You shall generate Short answer questions of a given topic from the given context in accordance with the 6 levels of bloom's taxonomy
+    - If you feel that the topic is broad then generate question for various sub topics of the broad topic
+    - You shall not ask for further assistance after the response is over
+    Which are:
+    1. Remembering
+    2. Understanding
+    3. Applying
+    4. Analyzing
+    5. Evaluating
+    6. Creating
+    And If the context does not contain enough information for a specific level, say "Insufficient Content for this level."
+    
+    === Context ===
+    {context}
+    ===============
+    
+    === Topic ===
+    {input}
+    =============
+    
+    Response Format:
+    Q1: [Remembering] <Question>
+    Answer: <Answer of the Question 1> 
+      
+    Q2: [Understanding] <Question>
+    Answer: <Answer of the Question 2>  
+     
+    Q3: [Applying] <Question>
+    Answer: <Answer of the Question 3>  
+     
+    Q4: [Analyzing] <Question>
+    Answer: <Answer of the Question 4>   
+    
+    Q5: [Evaluating] <Question>
+    Answer: <Answer of the Question 5>  
+     
+    Q6: [Creating] <Question>
+    Answer: <Answer of the Question 6>   
+""")
+])
+
+qpGenStuffChain = create_stuff_documents_chain(qpGenLLM, qpGenPrompt)
+qpGenChain = create_retrieval_chain(pdfRetriever, qpGenStuffChain)
+qpGenChainResponse = qpGenChain.invoke({"input": input("Enter your Topic for the quiz: ")})
+print(f"{'=='*10} Generated Response {'=='*10}")
+print(qpGenChainResponse["answer"])
