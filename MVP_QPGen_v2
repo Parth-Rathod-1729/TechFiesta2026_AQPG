@@ -1,0 +1,267 @@
+import os
+import json
+from langchain_classic.chains.combine_documents import create_stuff_documents_chain
+from langchain_classic.chains.retrieval import create_retrieval_chain
+from langchain_core.prompts import ChatPromptTemplate
+
+import LearningUtils
+
+PDFname = input("Enter the PDF name(with .pdf extension): ")
+targetPDFpath = os.path.join(".", "samplePDFs", PDFname)
+print(f"Loading {targetPDFpath}...")
+pdfVectorDB_path = os.path.join(".", "vectorDBs", f"{PDFname.split('.')[0]}_vecDB")
+
+pdfVectorDB = LearningUtils.getVectorStoreOf(textPDFpath=targetPDFpath, databasePath=pdfVectorDB_path)
+pdfRetriever = pdfVectorDB.as_retriever(
+    search_type="similarity",
+    search_kwargs={
+        "k": 10
+    }
+)
+
+qpGenLLM = LearningUtils.openAI_LLM7(temperature=0.1)
+topicForQuiz = input("Enter your Topic for the quiz: ")
+numberOfQuestionsForQuiz = int(input("Enter the number of questions: "))
+invokingPromptDict = {
+    "numberOfQuestions": numberOfQuestionsForQuiz,
+    "input": topicForQuiz
+}
+baseInstruction = """
+CRITICAL INSTRUCTIONS:
+     - You are an expert educational content creator and a quiz generator specializing in Bloom's Taxonomy. You shall generate questions of a given topic from the given context in accordance with the 6 levels of bloom's taxonomy
+         Which are:
+         1. Remembering
+         2. Understanding
+         3. Applying
+         4. Analyzing
+         5. Evaluating
+         6. Creating
+         And If the context does not contain enough information for a specific level, leave the question field as blank ("")
+     - If you feel that the topic is broad then generate question for various sub topics of the broad topic
+     - You shall not ask for further assistance after the response is over
+     - DO NOT add any conversational text before or after.
+     - Output ONLY a valid JSON object in format given below. DO NOT add markdown like ```json and ```.
+     - You shall generate {numberOfQuestions} questions about: {input}
+     - If you include a question that relies on an example given in the context then make sure to include the entire example in the question. DO NOT make question without giving the example first if you do decide to use the example to generate the question.
+"""
+
+questionType_Instruction = dict(
+    MCQ = """
+        - You shall generate Multiple choice questions in the given JSON format 
+        - DO NOT include any question from the Bloom's taxonomy level "Create" 
+    Structure:
+    {{
+      "quizType": "MCQ",
+      "topic": "{input}",
+      "quiz": [
+        {{
+          "level": "Remember",
+          "question": "...",
+          "options": ["optionA", "optionB", "optionC", "optionD"],
+          "answer": "Correct Option Text"
+        }},
+        {{
+          "level": "Understand",
+          "question": "...",
+          "options": ["optionA", "optionB", "optionC", "optionD"],
+          "answer": "Correct Option Text"
+        }},
+        {{
+          "level": "Apply",
+          "question": "...",
+          "options": ["optionA", "optionB", "optionC", "optionD"],
+          "answer": "Correct Option Text"
+        }},
+        {{
+          "level": "Analyze",
+          "question": "...",
+          "options": ["optionA", "optionB", "optionC", "optionD"],
+          "answer": "Correct Option Text"
+        }},
+        {{
+          "level": "Evaluate",
+          "question": "...",
+          "options": ["optionA", "optionB", "optionC", "optionD"],
+          "answer": "Correct Option Text"
+        }}, ...
+      ]
+    }}
+    """,
+    shortAnswer = """
+        - The answers of the questions should be at most 3 lines.
+        - You shall generate short answer type questions in the given JSON format 
+    Structure:
+    {{
+      "quizType": "shortAnswer",
+      "topic": "{input}",
+      "quiz": [
+        {{
+          "level": "Remember",
+          "question": "...",
+          "options": [],
+          "answer": "Correct Answer"
+        }},
+        {{
+          "level": "Understand",
+          "question": "...",
+          "options": [],
+          "answer": "Correct Answer"
+        }},
+        {{
+          "level": "Apply",
+          "question": "...",
+          "options": [],
+          "answer": "Correct Answer"
+        }},
+        {{
+          "level": "Analyze",
+          "question": "...",
+          "options": [],
+          "answer": "Correct Answer"
+        }},
+        {{
+          "level": "Evaluate",
+          "question": "...",
+          "options": [],
+          "answer": "Correct Answer"
+        }},
+        {{
+          "level": "Create",
+          "question": "...",
+          "options": [],
+          "answer": "Correct Answer"
+        }}, ...
+      ]
+    }}
+    """,
+    longAnswer = """
+        - The answers of the questions should be at least 4 lines
+        - You shall generate long answer type questions in the given JSON format 
+    Structure:
+    {{
+      "quizType": "longAnswer",
+      "topic": "{input}",
+      "quiz": [
+        {{
+          "level": "Remember",
+          "question": "...",
+          "options": [],
+          "answer": "Correct Answer"
+        }},
+        {{
+          "level": "Understand",
+          "question": "...",
+          "options": [],
+          "answer": "Correct Answer"
+        }},
+        {{
+          "level": "Apply",
+          "question": "...",
+          "options": [],
+          "answer": "Correct Answer"
+        }},
+        {{
+          "level": "Analyze",
+          "question": "...",
+          "options": [],
+          "answer": "Correct Answer"
+        }},
+        {{
+          "level": "Evaluate",
+          "question": "...",
+          "options": [],
+          "answer": "Correct Answer"
+        }},
+        {{
+          "level": "Create",
+          "question": "...",
+          "options": [],
+          "answer": "Correct Answer"
+        }}, ...
+      ]
+    }}
+    """,
+    booleanAnswer = """
+        - You shall generate statement questions that are either True or False in the given JSON format
+        - Make sure to include some statement questions that are False as well. DO NOT generate the quiz with all answers being True or False.
+    Structure:
+    {{
+      "quizType": "longAnswer",
+      "topic": "{input}",
+      "quiz": [
+        {{
+          "level": "Remember",
+          "question": "...",
+          "options": ["True", "False"],
+          "answer": "Correct Answer True or False"
+        }},
+        {{
+          "level": "Understand",
+          "question": "...",
+          "options": ["True", "False"],
+          "answer": "Correct Answer True or False"
+        }},
+        {{
+          "level": "Apply",
+          "question": "...",
+          "options": ["True", "False"],
+          "answer": "Correct Answer True or False"
+        }},
+        {{
+          "level": "Analyze",
+          "question": "...",
+          "options": ["True", "False"],
+          "answer": "Correct Answer True or False"
+        }},
+        {{
+          "level": "Evaluate",
+          "question": "...",
+          "options": ["True", "False"],
+          "answer": "Correct Answer True or False"
+        }},
+        {{
+          "level": "Create",
+          "question": "...",
+          "options": ["True", "False"],
+          "answer": "Correct Answer True or False"
+        }}, ...
+      ]
+    }}
+    """
+)
+
+contextForInstruction = """
+Context:
+{context}
+"""
+
+questionType = int(input("""
+Enter the type of question you would like to generate:
+- MCQ (1)
+- shortAnswer (2)
+- longAnswer (3)
+- True and False (4)
+: """))
+
+match questionType:
+    case 1:
+        questionType = "MCQ"
+    case 2:
+        questionType = "shortAnswer"
+    case 3:
+        questionType = "longAnswer"
+    case 4:
+        questionType = "booleanAnswer"
+    case _:
+        questionType = "shortAnswer"
+
+qpGenPrompt = ChatPromptTemplate.from_template(
+     baseInstruction + questionType_Instruction[questionType] + contextForInstruction
+)
+
+qpGenStuffChain = create_stuff_documents_chain(qpGenLLM, qpGenPrompt)
+qpGenChain = create_retrieval_chain(pdfRetriever, qpGenStuffChain)
+qpGenChainResponse = qpGenChain.invoke(invokingPromptDict)
+print(f"{'==' * 10} Generated Response {'==' * 10}")
+qpJSON = json.loads(qpGenChainResponse["answer"].replace("```json", "").replace("```", ""))
+print(qpJSON)
